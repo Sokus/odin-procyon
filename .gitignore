@@ -1,1 +1,5 @@
+*.bin
 *.exe
+*.pdb
+
+ols.json
