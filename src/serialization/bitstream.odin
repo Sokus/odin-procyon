@@ -1,12 +1,7 @@
 package serialization
 
 import "core:fmt"
-
-SerializationError :: enum {
-    None,
-    InvalidBitStreamMode,
-    Overflow,
-}
+import "core:mem"
 
 BitStreamMode :: enum {
     Write,
@@ -25,10 +20,10 @@ BitStream :: struct {
     bits_processed : int,
 }
 
-create_write_stream :: proc(buffer : []u8) -> BitStream {
-    assert(len(buffer) % 4 == 0)
+create_write_stream :: proc(buffer : []byte) -> BitStream {
+    assert(len(buffer) % 4 == 0, "BitStream buffer length not a multiple of 4 bytes")
     write_stream : BitStream
-    write_stream.mode = BitStreamMode.Write
+    write_stream.mode = .Write
     num_words := len(buffer) / 4
     write_stream.num_words = num_words
     write_stream.num_bits = num_words * 32
@@ -36,10 +31,10 @@ create_write_stream :: proc(buffer : []u8) -> BitStream {
     return write_stream
 }
 
-create_read_stream :: proc(buffer : []u8, #any_int bytes : int) -> BitStream {
+create_read_stream :: proc(buffer : []byte, #any_int bytes : int) -> BitStream {
     assert(len(buffer) % 4 == 0)
     read_stream : BitStream
-    read_stream.mode = BitStreamMode.Read
+    read_stream.mode = .Read
     read_stream.num_words = (bytes + 3) / 4
     read_stream.num_bits = bytes * 8
     read_stream.data = transmute([]u32)buffer
@@ -49,133 +44,116 @@ create_read_stream :: proc(buffer : []u8, #any_int bytes : int) -> BitStream {
 create_measure_stream :: proc(#any_int bytes : int) -> BitStream {
     assert(bytes % 4 == 0)
     measure_stream : BitStream
-    measure_stream.mode = BitStreamMode.Measure
+    measure_stream.mode = .Measure
     measure_stream.num_words = bytes / 4
     measure_stream.num_bits = bytes * 8
     return measure_stream
 }
 
-serialize_bits_write_stream :: proc(stream : ^BitStream, value : ^u32, #any_int bits : int) -> SerializationError {
-    using stream
-    assert(stream.mode == BitStreamMode.Write)
+_serialize_bits_write_stream :: proc(s : ^BitStream, value : ^u32, #any_int bits : int) -> SerializationError {
+    assert(s.mode == .Write)
     assert(value != nil)
     assert(bits > 0)
     assert(bits <= 32)
-    assert(!would_overflow(stream, bits))
+    assert(!would_overflow(s, bits))
 
-    if would_overflow(stream, bits) {
+    if would_overflow(s, bits) {
         return SerializationError.Overflow
     }
 
     write_value := value^ & cast(u32)((u64(1) << uint(bits)) - 1)
-    scratch |= u64(write_value) << uint(scratch_bits)
-    scratch_bits += bits
+    s.scratch |= u64(write_value) << uint(s.scratch_bits)
+    s.scratch_bits += bits
 
-    if scratch_bits >= 32 {
-        assert(word_index < num_words)
-        data[word_index] = u32(scratch & 0xFFFFFFFF)
-        scratch >>= 32
-        scratch_bits -= 32
-        word_index += 1
+    if s.scratch_bits >= 32 {
+        assert(s.word_index < s.num_words)
+        s.data[s.word_index] = u32(s.scratch & 0xFFFFFFFF)
+        s.scratch >>= 32
+        s.scratch_bits -= 32
+        s.word_index += 1
     }
 
-    bits_processed += bits
+    s.bits_processed += bits
 
     return SerializationError.None
 }
 
-serialize_bits_read_stream :: proc(stream : ^BitStream, value : ^u32, #any_int bits : int) -> SerializationError {
-    using stream
+_serialize_bits_read_stream :: proc(s : ^BitStream, value : ^u32, #any_int bits : int) -> SerializationError {
     assert(bits > 0)
     assert(bits <= 32)
-    assert(scratch_bits >= 0)
-    assert(scratch_bits <= 64)
-    assert(stream.mode == BitStreamMode.Read)
+    assert(s.scratch_bits >= 0)
+    assert(s.scratch_bits <= 64)
+    assert(s.mode == .Read)
 
-    if would_overflow(stream, bits) {
+    if would_overflow(s, bits) {
         return SerializationError.Overflow
     }
 
-    if (scratch_bits < bits)
+    if (s.scratch_bits < bits)
     {
-        assert(word_index < num_words)
-        scratch |= u64(data[word_index]) << uint(scratch_bits)
-        scratch_bits += 32
-        word_index += 1
+        assert(s.word_index < s.num_words)
+        s.scratch |= u64(s.data[s.word_index]) << uint(s.scratch_bits)
+        s.scratch_bits += 32
+        s.word_index += 1
     }
 
-    assert(scratch_bits >= bits)
-    value^ = u32(scratch & ((u64(1) << uint(bits)) - 1))
-    bits_processed += bits
-    scratch >>= uint(bits)
-    scratch_bits -= bits
+    assert(s.scratch_bits >= bits)
+    value^ = u32(s.scratch & ((u64(1) << uint(bits)) - 1))
+    s.bits_processed += bits
+    s.scratch >>= uint(bits)
+    s.scratch_bits -= bits
 
     return SerializationError.None
 }
 
-serialize_bits_measure_stream :: proc(stream : ^BitStream, value : ^u32, #any_int bits : int) -> SerializationError {
+_serialize_bits_measure_stream :: proc(s : ^BitStream, value : ^u32, #any_int bits : int) -> SerializationError {
     assert(bits > 0)
     assert(bits <= 32)
-    assert(stream.mode == BitStreamMode.Measure)
-    stream.bits_processed += bits
+    assert(s.mode == .Measure)
+    s.bits_processed += bits
 
     return SerializationError.None
 }
 
-serialize_bits :: proc(stream : ^BitStream, value : ^u32, #any_int bits : int) -> SerializationError {
-    switch stream.mode {
-        case .Write: return serialize_bits_write_stream(stream, value, bits)
-        case .Read: return serialize_bits_read_stream(stream, value, bits)
-        case .Measure: return serialize_bits_measure_stream(stream, value, bits)
+would_overflow :: proc(s : ^BitStream, #any_int bits : int) -> bool {
+    return s.bits_processed + bits > s.num_bits
+}
+
+get_bits_total :: proc(s : ^BitStream) -> int {
+    return s.num_bits
+}
+
+get_bytes_total :: proc(s : ^BitStream) -> int {
+    return s.num_bits / 8
+}
+
+get_bits_processed :: proc(s : ^BitStream) -> int {
+    return s.bits_processed
+}
+
+get_bytes_processed :: proc(s : ^BitStream) -> int {
+    return (s.bits_processed + 7) / 8
+}
+
+get_bits_remaining :: proc(s : ^BitStream) -> int {
+    return s.num_bits - s.bits_processed
+}
+
+get_bytes_remaining :: proc(s : ^BitStream) -> int {
+    return get_bytes_total(s) - get_bytes_processed(s)
+}
+
+get_align_bits :: proc(s : ^BitStream) -> int {
+    return (8 - s.bits_processed % 8) % 8
+}
+
+flush_bits :: proc(s : ^BitStream) {
+    assert(s.mode == .Write)
+    if s.scratch_bits != 0 {
+        assert(s.word_index < s.num_words)
+        s.data[s.word_index] = u32(s.scratch & 0xFFFFFFFF)
+        s.word_index += 1
+        s.scratch >>= 32
+        s.scratch_bits -= 32
     }
-    return SerializationError.InvalidBitStreamMode
 }
-
-// serialize_bytes_write_stream :: proc(stream : ^WriteStream,
-
-flush_bits :: proc(stream : ^BitStream) {
-    assert(stream.mode == BitStreamMode.Write)
-    using stream
-    if scratch_bits != 0 {
-        assert(word_index < num_words)
-        data[word_index] = u32(scratch & 0xFFFFFFFF)
-        word_index += 1
-        scratch >>= 32
-        scratch_bits -= 32
-    }
-}
-
-would_overflow :: proc(stream : ^BitStream, #any_int bits : int) -> bool {
-    return stream.bits_processed + bits > stream.num_bits
-}
-
-get_align_bits :: proc(stream : ^BitStream) -> int {
-    return (8 - stream.bits_processed % 8) % 8
-}
-
-serialize_align_align :: proc(stream : ^BitStream) -> SerializationError {
-    align_bits := get_align_bits(stream)
-    if align_bits > 0 {
-        value : u32
-        serialize_bits(stream, &value, align_bits) or_return
-        if stream.mode == .Write {
-            assert(stream.bits_processed % 8 == 0)
-        }
-    }
-
-    return SerializationError.None
-}
-
-get_bits_processed :: proc(stream : ^BitStream) -> int {
-    return stream.bits_processed
-}
-
-get_bytes_processed :: proc(stream : ^BitStream) -> int {
-    return (stream.bits_processed + 7) / 8
-}
-
-get_bits_remaining :: proc(stream : ^BitStream) -> int {
-    return stream.num_bits - stream.bits_processed
-}
-
-
