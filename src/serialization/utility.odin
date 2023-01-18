@@ -1,8 +1,8 @@
 package serialization
 
 bits_required :: proc(#any_int value : uint) -> int {
-    if value > (uint(1) << 31) {
-        return 32;
+    if value > (uint(1) << 63) {
+        return 64
     }
     pow : uint = 0
     for ;value > (1 << pow); pow += 1 {}
