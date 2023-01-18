@@ -102,3 +102,26 @@ serialize_check :: proc(s : ^BitStream, check : string) -> SerializationError {
     }
     return .InvalidBitStreamMode
 }
+
+serialize_range :: proc(s : ^BitStream, value : ^$T, min_value, max_value : T) -> SerializationError {
+    assert(size_of(T) <= sizeof(u32))
+    assert(min_value <= max_value)
+
+    bits := bits_required_for_range(min_value, max_value)
+
+    switch s.mode {
+        case .Write:
+            assert(value^ >= min)
+            assert(value^ <= max)
+            value_relative : u32 = u32(value^ - min)
+            return serialize_bits(s, &value_relative, bits)
+        case .Read:
+            value_relative : u32
+            serialize_bits(s, &value_relative, bits) or_return
+            value^ = T(value_relative) + min_value
+            return .None
+        case .Measure:
+            return serialize_bits(s, nil, bits)
+        case: return .InvalidBitStreamMode
+    }
+}

@@ -9,8 +9,9 @@ bits_required :: proc(#any_int value : uint) -> int {
     return int(pow)
 }
 
-bits_required_for_range :: proc(min_value, max_value : uint) -> int {
-    return 0 if min_value == max_value else bits_required(max_value - min_value)
+bits_required_for_range :: proc(min_value, max_value : $T) -> int {
+    assert(min_value <= max_value)
+    return 0 if min_value == max_value else bits_required(uint(max_value - min_value))
 }
 
 ptr_to_bytes :: proc "contextless" (ptr: ^$T, len := 1) -> []byte {
