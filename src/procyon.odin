@@ -171,9 +171,9 @@ main :: proc() {
 
 	input_element_desc := [?]D3D11.INPUT_ELEMENT_DESC{
 		{ "POS", 0, .R32G32B32_FLOAT, 0,                            0, .VERTEX_DATA, 0 },
-		{ "NOR", 0, .R32G32B32_FLOAT, 0, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
-		{ "TEX", 0, .R32G32_FLOAT,    0, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
-		{ "COL", 0, .R32G32B32_FLOAT, 0, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
+		{ "NOR", 0, .R32G32B32_FLOAT, 1, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
+		{ "TEX", 0, .R32G32_FLOAT,    2, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
+		{ "COL", 0, .R32G32B32_FLOAT, 3, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
 	}
 
 	input_layout: ^D3D11.IInputLayout
@@ -228,18 +228,60 @@ main :: proc() {
 	device->CreateBuffer(&constant_buffer_desc, nil, &constant_buffer)
 
 	vertex_buffer_desc := D3D11.BUFFER_DESC{
-		ByteWidth = size_of(vertex_data),
+		ByteWidth = size_of(vertices),
 		Usage     = .IMMUTABLE,
 		BindFlags = {.VERTEX_BUFFER},
 	}
 
 	vertex_subresource_data := D3D11.SUBRESOURCE_DATA{
-		pSysMem = &vertex_data[0],
-		SysMemPitch = size_of(vertex_data),
+		pSysMem     = &vertices[0],
+		SysMemPitch = size_of(vertices),
 	}
 
 	vertex_buffer: ^D3D11.IBuffer
 	device->CreateBuffer(&vertex_buffer_desc, &vertex_subresource_data, &vertex_buffer)
+
+	normal_buffer_desc := D3D11.BUFFER_DESC{
+		ByteWidth = size_of(normals),
+		Usage     = .IMMUTABLE,
+		BindFlags = {.VERTEX_BUFFER},
+	}
+
+	normal_subresource_data := D3D11.SUBRESOURCE_DATA{
+		pSysMem     = &normals[0],
+		SysMemPitch = size_of(normals),
+	}
+
+	normal_buffer : ^D3D11.IBuffer
+	device->CreateBuffer(&normal_buffer_desc, &normal_subresource_data, &normal_buffer)
+
+	texcoord_buffer_desc := D3D11.BUFFER_DESC{
+		ByteWidth = size_of(texcoords),
+		Usage     = .IMMUTABLE,
+		BindFlags = {.VERTEX_BUFFER},
+	}
+
+	texcoord_subresource_data := D3D11.SUBRESOURCE_DATA{
+		pSysMem     = &texcoords[0],
+		SysMemPitch = size_of(texcoords),
+	}
+
+	texcoord_buffer : ^D3D11.IBuffer
+	device->CreateBuffer(&texcoord_buffer_desc, &texcoord_subresource_data, &texcoord_buffer)
+
+	color_buffer_desc := D3D11.BUFFER_DESC{
+		ByteWidth = size_of(color_data),
+		Usage     = .IMMUTABLE,
+		BindFlags = {.VERTEX_BUFFER},
+	}
+
+	color_subresource_data := D3D11.SUBRESOURCE_DATA{
+		pSysMem     = &color_data[0],
+		SysMemPitch = size_of(color_data),
+	}
+
+	color_buffer : ^D3D11.IBuffer
+	device->CreateBuffer(&color_buffer_desc, &color_subresource_data, &color_buffer)
 
 	index_buffer_desc := D3D11.BUFFER_DESC{
 		ByteWidth = size_of(index_data),
@@ -281,8 +323,23 @@ main :: proc() {
 
 	///////////////////////////////////////////////////////////////////////////////////////////////
 
-	vertex_buffer_stride := u32(11 * 4)
-	vertex_buffer_offset := u32(0)
+	vertex_buffers := [?]^D3D11.IBuffer{
+		vertex_buffer,
+		normal_buffer,
+		texcoord_buffer,
+		color_buffer,
+	}
+
+	vertex_buffer_strides := [?]u32{
+		3 * 4, // vertices
+		3 * 4, // normals
+		2 * 4, // texcoords
+		3 * 4, // colors
+	}
+
+	vertex_buffer_offsets := [?]u32{
+		0, 0, 0, 0,
+	}
 
 	model_rotation    := glm.vec3{0.0, 0.0, 0.0}
 	model_translation := glm.vec3{0.0, 0.0, 4.0}
@@ -334,7 +391,7 @@ main :: proc() {
 
 		device_context->IASetPrimitiveTopology(.TRIANGLELIST)
 		device_context->IASetInputLayout(input_layout)
-		device_context->IASetVertexBuffers(0, 1, &vertex_buffer, &vertex_buffer_stride, &vertex_buffer_offset)
+		device_context->IASetVertexBuffers(0, len(vertex_buffers), &vertex_buffers[0], &vertex_buffer_strides[0], &vertex_buffer_offsets[0])
 		device_context->IASetIndexBuffer(index_buffer, .R32_UINT, 0)
 
 		device_context->VSSetShader(vertex_shader, nil, 0)
@@ -371,32 +428,116 @@ width : f32 = 1.0
 height : f32 = 1.0
 length : f32 = 1.0
 
-// position: float3, normal: float3, texcoord: float2, color: float3
-vertex_data := [?]f32{
-	-width/2, -height/2,  length/2,  0,  0,  1, 0, 0, 0.973,  0.480,  0.002,
-	 width/2, -height/2,  length/2,  0,  0,  1, 1, 0, 0.973,  0.480,  0.002,
-	 width/2,  height/2,  length/2,  0,  0,  1, 1, 1, 0.973,  0.480,  0.002,
-	-width/2,  height/2,  length/2,  0,  0,  1, 0, 1, 0.973,  0.480,  0.002,
-	-width/2, -height/2, -length/2,  0,  0, -1, 1, 0, 0.897,  0.163,  0.011,
-	-width/2,  height/2, -length/2,  0,  0, -1, 1, 1, 0.897,  0.163,  0.011,
-	 width/2,  height/2, -length/2,  0,  0, -1, 0, 1, 0.897,  0.163,  0.011,
-	 width/2, -height/2, -length/2,  0,  0, -1, 0, 0, 0.897,  0.163,  0.011,
-	-width/2,  height/2, -length/2,  0,  1,  0, 0, 1, 0.612,  0.000,  0.069,
-	-width/2,  height/2,  length/2,  0,  1,  0, 0, 0, 0.612,  0.000,  0.069,
-	 width/2,  height/2,  length/2,  0,  1,  0, 1, 0, 0.612,  0.000,  0.069,
-	 width/2,  height/2, -length/2,  0,  1,  0, 1, 1, 0.612,  0.000,  0.069,
-	-width/2, -height/2, -length/2,  0, -1,  0, 1, 1, 0.127,  0.116,  0.408,
-	 width/2, -height/2, -length/2,  0, -1,  0, 0, 1, 0.127,  0.116,  0.408,
-	 width/2, -height/2,  length/2,  0, -1,  0, 0, 0, 0.127,  0.116,  0.408,
-	-width/2, -height/2,  length/2,  0, -1,  0, 1, 0, 0.127,  0.116,  0.408,
-	 width/2, -height/2, -length/2,  1,  0,  0, 1, 0, 0.000,  0.254,  0.637,
-	 width/2,  height/2, -length/2,  1,  0,  0, 1, 1, 0.000,  0.254,  0.637,
-	 width/2,  height/2,  length/2,  1,  0,  0, 0, 1, 0.000,  0.254,  0.637,
-	 width/2, -height/2,  length/2,  1,  0,  0, 0, 0, 0.000,  0.254,  0.637,
-	-width/2, -height/2, -length/2, -1,  0,  0, 0, 0, 0.001,  0.447,  0.067,
-	-width/2, -height/2,  length/2, -1,  0,  0, 1, 0, 0.001,  0.447,  0.067,
-	-width/2,  height/2,  length/2, -1,  0,  0, 1, 1, 0.001,  0.447,  0.067,
-	-width/2,  height/2, -length/2, -1,  0,  0, 0, 1, 0.001,  0.447,  0.067,
+// color: float3
+color_data := [?]f32{
+	0.973,  0.480,  0.002,
+	0.973,  0.480,  0.002,
+	0.973,  0.480,  0.002,
+	0.973,  0.480,  0.002,
+	0.897,  0.163,  0.011,
+	0.897,  0.163,  0.011,
+	0.897,  0.163,  0.011,
+	0.897,  0.163,  0.011,
+	0.612,  0.000,  0.069,
+	0.612,  0.000,  0.069,
+	0.612,  0.000,  0.069,
+	0.612,  0.000,  0.069,
+	0.127,  0.116,  0.408,
+	0.127,  0.116,  0.408,
+	0.127,  0.116,  0.408,
+	0.127,  0.116,  0.408,
+	0.000,  0.254,  0.637,
+	0.000,  0.254,  0.637,
+	0.000,  0.254,  0.637,
+	0.000,  0.254,  0.637,
+	0.001,  0.447,  0.067,
+	0.001,  0.447,  0.067,
+	0.001,  0.447,  0.067,
+	0.001,  0.447,  0.067,
+}
+
+// normals: float3
+normals := [?]f32{
+	0, 0, 1,
+	0, 0, 1,
+	0, 0, 1,
+	0, 0, 1,
+	0,  0, -1,
+	0,  0, -1,
+	0,  0, -1,
+	0,  0, -1,
+	0,  1,  0,
+	0,  1,  0,
+	0,  1,  0,
+	0,  1,  0,
+	0, -1,  0,
+	0, -1,  0,
+	0, -1,  0,
+	0, -1,  0,
+	1,  0,  0,
+	1,  0,  0,
+	1,  0,  0,
+	1,  0,  0,
+	-1,  0,  0,
+	-1,  0,  0,
+	-1,  0,  0,
+	-1,  0,  0,
+}
+
+// texcoord: float2
+texcoords := [?]f32{
+	0, 0,
+	1, 0,
+	1, 1,
+	0, 1,
+	1, 0,
+	1, 1,
+	0, 1,
+	0, 0,
+	0, 1,
+	0, 0,
+	1, 0,
+	1, 1,
+	1, 1,
+	0, 1,
+	0, 0,
+	1, 0,
+	1, 0,
+	1, 1,
+	0, 1,
+	0, 0,
+	0, 0,
+	1, 0,
+	1, 1,
+	0, 1,
+}
+
+// position: float3, normal: float3,
+vertices := [?]f32{
+	-width/2, -height/2,  length/2,
+	 width/2, -height/2,  length/2,
+	 width/2,  height/2,  length/2,
+	-width/2,  height/2,  length/2,
+	-width/2, -height/2, -length/2,
+	-width/2,  height/2, -length/2,
+	 width/2,  height/2, -length/2,
+	 width/2, -height/2, -length/2,
+	-width/2,  height/2, -length/2,
+	-width/2,  height/2,  length/2,
+	 width/2,  height/2,  length/2,
+	 width/2,  height/2, -length/2,
+	-width/2, -height/2, -length/2,
+	 width/2, -height/2, -length/2,
+	 width/2, -height/2,  length/2,
+	-width/2, -height/2,  length/2,
+	 width/2, -height/2, -length/2,
+	 width/2,  height/2, -length/2,
+	 width/2,  height/2,  length/2,
+	 width/2, -height/2,  length/2,
+	-width/2, -height/2, -length/2,
+	-width/2, -height/2,  length/2,
+	-width/2,  height/2,  length/2,
+	-width/2,  height/2, -length/2,
 }
 
 index_data := [?]u32{
