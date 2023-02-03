@@ -4,15 +4,14 @@ import "core:fmt"
 import win "core:sys/windows"
 import glm "core:math/linalg/glsl"
 import "core:strings"
+import "core:slice"
 
 import "vendor:glfw"
 import DXGI "vendor:directx/dxgi"
 import D3D11 "vendor:directx/d3d11"
 import D3D "vendor:directx/d3d_compiler"
 
-// Based off https://gist.github.com/d7samurai/261c69490cce0620d0bfc93003cd1052
-
-compile_shader :: proc(file_name, entry_point, profile : string) -> (shader_blob : ^D3D11.IBlob) {
+compile_shader :: proc(file_name, entry_point, profile: string) -> (shader_blob: ^D3D11.IBlob) {
 	compiler_flags := D3D.D3DCOMPILE.ENABLE_STRICTNESS
 	error_blob : ^D3D11.IBlob
 
@@ -32,7 +31,7 @@ compile_shader :: proc(file_name, entry_point, profile : string) -> (shader_blob
 	return shader_blob
 }
 
-create_vertex_shader :: proc(device : ^D3D11.IDevice, file_name : string) -> (vertex_shader : ^D3D11.IVertexShader, vertex_shader_blob : ^D3D11.IBlob) {
+create_vertex_shader :: proc(device: ^D3D11.IDevice, file_name: string) -> (vertex_shader : ^D3D11.IVertexShader, vertex_shader_blob : ^D3D11.IBlob) {
 	vertex_shader_blob = compile_shader(file_name, "vs_main", "vs_5_0")
 	if vertex_shader_blob == nil {
 		return nil, nil
@@ -47,7 +46,7 @@ create_vertex_shader :: proc(device : ^D3D11.IDevice, file_name : string) -> (ve
 	return vertex_shader, vertex_shader_blob
 }
 
-create_pixel_shader :: proc(device : ^D3D11.IDevice, file_name : string) -> (pixel_shader : ^D3D11.IPixelShader, pixel_shader_blob : ^D3D11.IBlob) {
+create_pixel_shader :: proc(device: ^D3D11.IDevice, file_name: string) -> (pixel_shader : ^D3D11.IPixelShader, pixel_shader_blob : ^D3D11.IBlob) {
 	pixel_shader_blob = compile_shader(file_name, "ps_main", "ps_5_0")
 	if pixel_shader_blob == nil {
 		return nil, nil
@@ -60,6 +59,196 @@ create_pixel_shader :: proc(device : ^D3D11.IDevice, file_name : string) -> (pix
 	}
 
 	return pixel_shader, pixel_shader_blob
+}
+
+MeshVertexBuffer :: enum {
+	Position,
+	Normal,
+	Texcoord,
+	Color,
+}
+
+Mesh :: struct {
+	vertices:  []f32,
+	texcoords: []f32,
+	normals:   []f32,
+	colors:    []f32,
+	indices:   []u32,
+
+	vertex_buffers: [MeshVertexBuffer]^D3D11.IBuffer,
+	index_buffer: ^D3D11.IBuffer,
+
+	input_layout: ^D3D11.IInputLayout,
+}
+
+State :: struct {
+	device: ^D3D11.IDevice,
+
+	vs_blob, ps_blob: ^D3D11.IBlob,
+	vertex_shader: ^D3D11.IVertexShader,
+	pixel_shader: ^D3D11.IPixelShader,
+
+	input_layout: ^D3D11.IInputLayout,
+}
+
+state: State
+
+upload_mesh :: proc(mesh: ^Mesh) {
+	for mesh_vertex_buffer in MeshVertexBuffer {
+		assert(mesh.vertex_buffers[mesh_vertex_buffer] == nil, "Failed to upload mesh, buffer already initialized")
+	}
+
+	input_element_desc := [?]D3D11.INPUT_ELEMENT_DESC{
+		{ "POS", 0, .R32G32B32_FLOAT, 0,                            0, .VERTEX_DATA, 0 },
+		{ "NOR", 0, .R32G32B32_FLOAT, 1, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
+		{ "TEX", 0, .R32G32_FLOAT,    2, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
+		{ "COL", 0, .R32G32B32_FLOAT, 3, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA if len(mesh.colors) > 0 else .INSTANCE_DATA, 0 },
+	}
+
+	vertex_buffer_desc := D3D11.BUFFER_DESC{ Usage = .IMMUTABLE, BindFlags = {.VERTEX_BUFFER} }
+	subresource_data: D3D11.SUBRESOURCE_DATA
+
+	assert(len(mesh.vertices) > 0)
+	vertices_size := cast(u32)(len(mesh.vertices) * size_of(f32))
+	vertex_buffer_desc.ByteWidth = vertices_size
+	subresource_data = D3D11.SUBRESOURCE_DATA{ pSysMem = &mesh.vertices[0], SysMemPitch = vertices_size }
+	state.device->CreateBuffer(&vertex_buffer_desc, &subresource_data, &mesh.vertex_buffers[.Position])
+
+	assert(len(mesh.texcoords) > 0)
+	texcoords_size := cast(u32)(len(mesh.texcoords) * size_of(f32))
+	vertex_buffer_desc.ByteWidth = texcoords_size
+	subresource_data = D3D11.SUBRESOURCE_DATA{ pSysMem = &mesh.texcoords[0], SysMemPitch = texcoords_size }
+	state.device->CreateBuffer(&vertex_buffer_desc, &subresource_data, &mesh.vertex_buffers[.Texcoord])
+
+	assert(len(mesh.normals) > 0)
+	normals_size := cast(u32)(len(mesh.normals) * size_of(f32))
+	vertex_buffer_desc.ByteWidth = normals_size
+	subresource_data = D3D11.SUBRESOURCE_DATA{ pSysMem = &mesh.normals[0], SysMemPitch = normals_size }
+	state.device->CreateBuffer(&vertex_buffer_desc, &subresource_data, &mesh.vertex_buffers[.Normal])
+
+	if len(mesh.colors) == 0 {
+		colors := []f32{ 1.0, 1.0, 1.0 }
+		mesh.colors = make([]f32, len(colors))
+		copy_slice(mesh.colors, colors)
+	}
+
+	colors_size := cast(u32)(len(mesh.colors) * size_of(f32))
+	vertex_buffer_desc.ByteWidth = colors_size
+	subresource_data = D3D11.SUBRESOURCE_DATA{ pSysMem = &mesh.colors[0], SysMemPitch = colors_size }
+	state.device->CreateBuffer(&vertex_buffer_desc, &subresource_data, &mesh.vertex_buffers[.Color])
+
+	indices_size := cast(u32)(len(mesh.indices) * size_of(u32))
+	index_buffer_desc := D3D11.BUFFER_DESC{
+		Usage = .IMMUTABLE,
+		BindFlags = {.INDEX_BUFFER},
+		ByteWidth = indices_size,
+	}
+	subresource_data = D3D11.SUBRESOURCE_DATA{ pSysMem = &mesh.indices[0], SysMemPitch = indices_size }
+	state.device->CreateBuffer(&index_buffer_desc, &subresource_data, &mesh.index_buffer)
+
+	state.device->CreateInputLayout(&input_element_desc[0], len(input_element_desc), state.vs_blob->GetBufferPointer(), state.vs_blob->GetBufferSize(), &mesh.input_layout)
+}
+
+generate_mesh_cube :: proc(width, height, length: f32) -> (mesh: Mesh) {
+	vertices := [?]f32{
+		-width/2, -height/2,  length/2,
+		 width/2, -height/2,  length/2,
+		 width/2,  height/2,  length/2,
+		-width/2,  height/2,  length/2,
+		-width/2, -height/2, -length/2,
+		-width/2,  height/2, -length/2,
+		 width/2,  height/2, -length/2,
+		 width/2, -height/2, -length/2,
+		-width/2,  height/2, -length/2,
+		-width/2,  height/2,  length/2,
+		 width/2,  height/2,  length/2,
+		 width/2,  height/2, -length/2,
+		-width/2, -height/2, -length/2,
+		 width/2, -height/2, -length/2,
+		 width/2, -height/2,  length/2,
+		-width/2, -height/2,  length/2,
+		 width/2, -height/2, -length/2,
+		 width/2,  height/2, -length/2,
+		 width/2,  height/2,  length/2,
+		 width/2, -height/2,  length/2,
+		-width/2, -height/2, -length/2,
+		-width/2, -height/2,  length/2,
+		-width/2,  height/2,  length/2,
+		-width/2,  height/2, -length/2,
+	}
+
+	normals := [?]f32{
+		 0.0, 0.0, 1.0,  0.0, 0.0, 1.0,  0.0, 0.0, 1.0,  0.0, 0.0, 1.0,
+		 0.0, 0.0,-1.0,  0.0, 0.0,-1.0,  0.0, 0.0,-1.0,  0.0, 0.0,-1.0,
+		 0.0, 1.0, 0.0,  0.0, 1.0, 0.0,  0.0, 1.0, 0.0,  0.0, 1.0, 0.0,
+		 0.0,-1.0, 0.0,  0.0,-1.0, 0.0,  0.0,-1.0, 0.0,  0.0,-1.0, 0.0,
+		 1.0, 0.0, 0.0,  1.0, 0.0, 0.0,  1.0, 0.0, 0.0,  1.0, 0.0, 0.0,
+		-1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0,
+	}
+
+	texcoords := [?]f32{
+		0.0, 0.0,  1.0, 0.0,  1.0, 1.0,  0.0, 1.0,
+		1.0, 0.0,  1.0, 1.0,  0.0, 1.0,  0.0, 0.0,
+		0.0, 1.0,  0.0, 0.0,  1.0, 0.0,  1.0, 1.0,
+		1.0, 1.0,  0.0, 1.0,  0.0, 0.0,  1.0, 0.0,
+		1.0, 0.0,  1.0, 1.0,  0.0, 1.0,  0.0, 0.0,
+		0.0, 0.0,  1.0, 0.0,  1.0, 1.0,  0.0, 1.0,
+	}
+
+	colors := [?]f32{
+		0.973,  0.480,  0.002,
+		0.973,  0.480,  0.002,
+		0.973,  0.480,  0.002,
+		0.973,  0.480,  0.002,
+		0.897,  0.163,  0.011,
+		0.897,  0.163,  0.011,
+		0.897,  0.163,  0.011,
+		0.897,  0.163,  0.011,
+		0.612,  0.000,  0.069,
+		0.612,  0.000,  0.069,
+		0.612,  0.000,  0.069,
+		0.612,  0.000,  0.069,
+		0.127,  0.116,  0.408,
+		0.127,  0.116,  0.408,
+		0.127,  0.116,  0.408,
+		0.127,  0.116,  0.408,
+		0.000,  0.254,  0.637,
+		0.000,  0.254,  0.637,
+		0.000,  0.254,  0.637,
+		0.000,  0.254,  0.637,
+		0.001,  0.447,  0.067,
+		0.001,  0.447,  0.067,
+		0.001,  0.447,  0.067,
+		0.001,  0.447,  0.067,
+	}
+
+	indices := [?]u32{
+		0,  1,  2,  0,  2,  3,
+		4,  5,  6,  4,  6,  7,
+		8,  9, 10,  8, 10, 11,
+	   12, 13, 14, 12, 14, 15,
+	   16, 17, 18, 16, 18, 19,
+	   20, 21, 22, 20, 22, 23,
+    }
+
+	mesh.vertices = make([]f32, len(vertices))
+	copy_slice(mesh.vertices, vertices[:])
+
+	mesh.normals = make([]f32, len(normals))
+	copy_slice(mesh.normals, normals[:])
+
+	mesh.texcoords = make([]f32, len(texcoords))
+	copy_slice(mesh.texcoords, texcoords[:])
+
+	mesh.colors = make([]f32, len(colors))
+	copy_slice(mesh.colors, colors[:])
+
+	mesh.indices = make([]u32, len(indices))
+	copy_slice(mesh.indices, indices[:])
+
+	upload_mesh(&mesh)
+
+	return mesh
 }
 
 main :: proc() {
@@ -85,14 +274,13 @@ main :: proc() {
 		return
 	}
 
-	device: ^D3D11.IDevice
-	result = base_device->QueryInterface(D3D11.IDevice_UUID, (^rawptr)(&device))
+	result = base_device->QueryInterface(D3D11.IDevice_UUID, (^rawptr)(&state.device))
 
 	device_context: ^D3D11.IDeviceContext
 	base_device_context->QueryInterface(D3D11.IDeviceContext_UUID, (^rawptr)(&device_context))
 
 	dxgi_device: ^DXGI.IDevice
-	device->QueryInterface(DXGI.IDevice_UUID, (^rawptr)(&dxgi_device))
+	state.device->QueryInterface(DXGI.IDevice_UUID, (^rawptr)(&dxgi_device))
 
 	dxgi_adapter: ^DXGI.IAdapter
 	dxgi_device->GetAdapter(&dxgi_adapter)
@@ -120,7 +308,7 @@ main :: proc() {
 	}
 
 	swapchain: ^DXGI.ISwapChain1
-	result = dxgi_factory->CreateSwapChainForHwnd(device, hwnd, &swapchain_desc, nil, nil, &swapchain)
+	result = dxgi_factory->CreateSwapChainForHwnd(state.device, hwnd, &swapchain_desc, nil, nil, &swapchain)
 	if !win.SUCCEEDED(result) {
 		fmt.printf("DXGI: Failed to create Swapchain (0x%x)\n", u32(result))
 		return
@@ -136,7 +324,7 @@ main :: proc() {
 	defer framebuffer->Release()
 
 	framebuffer_view: ^D3D11.IRenderTargetView
-	result = device->CreateRenderTargetView(framebuffer, nil, &framebuffer_view)
+	result = state.device->CreateRenderTargetView(framebuffer, nil, &framebuffer_view)
 	if !win.SUCCEEDED(result) {
 		fmt.printf("D3D11: Failed to create Render Target View (0x%x)\n", u32(result))
 		return
@@ -149,7 +337,7 @@ main :: proc() {
 	depth_buffer_desc.BindFlags = {.DEPTH_STENCIL}
 
 	depth_buffer: ^D3D11.ITexture2D
-	result = device->CreateTexture2D(&depth_buffer_desc, nil, &depth_buffer)
+	result = state.device->CreateTexture2D(&depth_buffer_desc, nil, &depth_buffer)
 	if !win.SUCCEEDED(result) {
 		fmt.printf("D3D11: Failed to create Depth Buffer (0x%x)\n", u32(result))
 		return
@@ -157,7 +345,7 @@ main :: proc() {
 	defer depth_buffer->Release()
 
 	depth_buffer_view: ^D3D11.IDepthStencilView
-	result = device->CreateDepthStencilView(depth_buffer, nil, &depth_buffer_view)
+	result = state.device->CreateDepthStencilView(depth_buffer, nil, &depth_buffer_view)
 	if !win.SUCCEEDED(result) {
 		fmt.printf("D3D11: Failed to create Depth Stencil View (0x%x)\n", u32(result))
 		return
@@ -166,8 +354,8 @@ main :: proc() {
 
 	///////////////////////////////////////////////////////////////////////////////////////////////
 
-	vertex_shader, vs_blob := create_vertex_shader(device, "assets/shader.hlsl")
-	assert(vs_blob != nil)
+	state.vertex_shader, state.vs_blob = create_vertex_shader(state.device, "assets/shader.hlsl")
+	assert(state.vs_blob != nil)
 
 	input_element_desc := [?]D3D11.INPUT_ELEMENT_DESC{
 		{ "POS", 0, .R32G32B32_FLOAT, 0,                            0, .VERTEX_DATA, 0 },
@@ -176,10 +364,7 @@ main :: proc() {
 		{ "COL", 0, .R32G32B32_FLOAT, 3, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
 	}
 
-	input_layout: ^D3D11.IInputLayout
-	device->CreateInputLayout(&input_element_desc[0], len(input_element_desc), vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), &input_layout)
-
-	pixel_shader, ps_blob := create_pixel_shader(device, "assets/shader.hlsl")
+	state.pixel_shader, state.ps_blob = create_pixel_shader(state.device, "assets/shader.hlsl")
 
 	///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -188,8 +373,7 @@ main :: proc() {
 		CullMode = .BACK,
 	}
 	rasterizer_state: ^D3D11.IRasterizerState
-	result = device->CreateRasterizerState(&rasterizer_desc, &rasterizer_state)
-
+	result = state.device->CreateRasterizerState(&rasterizer_desc, &rasterizer_state)
 
 	sampler_desc := D3D11.SAMPLER_DESC{
 		Filter         = .MIN_MAG_MIP_POINT,
@@ -199,8 +383,7 @@ main :: proc() {
 		ComparisonFunc = .NEVER,
 	}
 	sampler_state: ^D3D11.ISamplerState
-	device->CreateSamplerState(&sampler_desc, &sampler_state)
-
+	state.device->CreateSamplerState(&sampler_desc, &sampler_state)
 
 	depth_stencil_desc := D3D11.DEPTH_STENCIL_DESC{
 		DepthEnable    = true,
@@ -208,7 +391,7 @@ main :: proc() {
 		DepthFunc      = .LESS,
 	}
 	depth_stencil_state: ^D3D11.IDepthStencilState
-	device->CreateDepthStencilState(&depth_stencil_desc, &depth_stencil_state)
+	state.device->CreateDepthStencilState(&depth_stencil_desc, &depth_stencil_state)
 
 	///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -225,77 +408,7 @@ main :: proc() {
 		CPUAccessFlags = {.WRITE},
 	}
 	constant_buffer: ^D3D11.IBuffer
-	device->CreateBuffer(&constant_buffer_desc, nil, &constant_buffer)
-
-	vertex_buffer_desc := D3D11.BUFFER_DESC{
-		ByteWidth = size_of(vertices),
-		Usage     = .IMMUTABLE,
-		BindFlags = {.VERTEX_BUFFER},
-	}
-
-	vertex_subresource_data := D3D11.SUBRESOURCE_DATA{
-		pSysMem     = &vertices[0],
-		SysMemPitch = size_of(vertices),
-	}
-
-	vertex_buffer: ^D3D11.IBuffer
-	device->CreateBuffer(&vertex_buffer_desc, &vertex_subresource_data, &vertex_buffer)
-
-	normal_buffer_desc := D3D11.BUFFER_DESC{
-		ByteWidth = size_of(normals),
-		Usage     = .IMMUTABLE,
-		BindFlags = {.VERTEX_BUFFER},
-	}
-
-	normal_subresource_data := D3D11.SUBRESOURCE_DATA{
-		pSysMem     = &normals[0],
-		SysMemPitch = size_of(normals),
-	}
-
-	normal_buffer : ^D3D11.IBuffer
-	device->CreateBuffer(&normal_buffer_desc, &normal_subresource_data, &normal_buffer)
-
-	texcoord_buffer_desc := D3D11.BUFFER_DESC{
-		ByteWidth = size_of(texcoords),
-		Usage     = .IMMUTABLE,
-		BindFlags = {.VERTEX_BUFFER},
-	}
-
-	texcoord_subresource_data := D3D11.SUBRESOURCE_DATA{
-		pSysMem     = &texcoords[0],
-		SysMemPitch = size_of(texcoords),
-	}
-
-	texcoord_buffer : ^D3D11.IBuffer
-	device->CreateBuffer(&texcoord_buffer_desc, &texcoord_subresource_data, &texcoord_buffer)
-
-	color_buffer_desc := D3D11.BUFFER_DESC{
-		ByteWidth = size_of(color_data),
-		Usage     = .IMMUTABLE,
-		BindFlags = {.VERTEX_BUFFER},
-	}
-
-	color_subresource_data := D3D11.SUBRESOURCE_DATA{
-		pSysMem     = &color_data[0],
-		SysMemPitch = size_of(color_data),
-	}
-
-	color_buffer : ^D3D11.IBuffer
-	device->CreateBuffer(&color_buffer_desc, &color_subresource_data, &color_buffer)
-
-	index_buffer_desc := D3D11.BUFFER_DESC{
-		ByteWidth = size_of(index_data),
-		Usage     = .IMMUTABLE,
-		BindFlags = {.INDEX_BUFFER},
-	}
-
-	index_subresource_data := D3D11.SUBRESOURCE_DATA{
-		pSysMem = &index_data[0],
-		SysMemPitch = size_of(index_data),
-	}
-
-	index_buffer: ^D3D11.IBuffer
-	device->CreateBuffer(&index_buffer_desc, &index_subresource_data, &index_buffer)
+	state.device->CreateBuffer(&constant_buffer_desc, nil, &constant_buffer)
 
 	///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -316,25 +429,20 @@ main :: proc() {
 	}
 
 	texture: ^D3D11.ITexture2D
-	device->CreateTexture2D(&texture_desc, &texture_data, &texture)
+	state.device->CreateTexture2D(&texture_desc, &texture_data, &texture)
 
 	texture_view: ^D3D11.IShaderResourceView
-	device->CreateShaderResourceView(texture, nil, &texture_view)
+	state.device->CreateShaderResourceView(texture, nil, &texture_view)
 
 	///////////////////////////////////////////////////////////////////////////////////////////////
 
-	vertex_buffers := [?]^D3D11.IBuffer{
-		vertex_buffer,
-		normal_buffer,
-		texcoord_buffer,
-		color_buffer,
-	}
+	mesh := generate_mesh_cube(1.0, 1.0, 1.0)
 
 	vertex_buffer_strides := [?]u32{
-		3 * 4, // vertices
-		3 * 4, // normals
-		2 * 4, // texcoords
-		3 * 4, // colors
+		3 * size_of(f32), // vertices
+		3 * size_of(f32), // normals
+		2 * size_of(f32), // texcoords
+		3 * size_of(f32), // colors
 	}
 
 	vertex_buffer_offsets := [?]u32{
@@ -390,17 +498,20 @@ main :: proc() {
 		device_context->ClearDepthStencilView(depth_buffer_view, {.DEPTH}, 1, 0)
 
 		device_context->IASetPrimitiveTopology(.TRIANGLELIST)
-		device_context->IASetInputLayout(input_layout)
-		device_context->IASetVertexBuffers(0, len(vertex_buffers), &vertex_buffers[0], &vertex_buffer_strides[0], &vertex_buffer_offsets[0])
-		device_context->IASetIndexBuffer(index_buffer, .R32_UINT, 0)
+		//device_context->IASetInputLayout(input_layout)
+		//device_context->IASetVertexBuffers(0, len(vertex_buffers), &vertex_buffers[0], &vertex_buffer_strides[0], &vertex_buffer_offsets[0])
+		device_context->IASetInputLayout(mesh.input_layout)
+		device_context->IASetVertexBuffers(0, len(mesh.vertex_buffers), &mesh.vertex_buffers[MeshVertexBuffer(0)], &vertex_buffer_strides[0], &vertex_buffer_offsets[0])
+		//device_context->IASetIndexBuffer(index_buffer, .R32_UINT, 0)
+		device_context->IASetIndexBuffer(mesh.index_buffer, .R32_UINT, 0)
 
-		device_context->VSSetShader(vertex_shader, nil, 0)
+		device_context->VSSetShader(state.vertex_shader, nil, 0)
 		device_context->VSSetConstantBuffers(0, 1, &constant_buffer)
 
 		device_context->RSSetViewports(1, &viewport)
 		device_context->RSSetState(rasterizer_state)
 
-		device_context->PSSetShader(pixel_shader, nil, 0)
+		device_context->PSSetShader(state.pixel_shader, nil, 0)
 		device_context->PSSetShaderResources(0, 1, &texture_view)
 		device_context->PSSetSamplers(0, 1, &sampler_state)
 
@@ -410,7 +521,7 @@ main :: proc() {
 
 		///////////////////////////////////////////////////////////////////////////////////////////////
 
-		device_context->DrawIndexed(len(index_data), 0, 0)
+		device_context->DrawIndexed(u32(len(mesh.indices)), 0, 0)
 
 		swapchain->Present(1, 0)
 	}
@@ -424,12 +535,8 @@ texture_data := [TEXTURE_WIDTH*TEXTURE_HEIGHT]u32{
 	0xff7f7f7f, 0xffffffff,
 }
 
-width : f32 = 1.0
-height : f32 = 1.0
-length : f32 = 1.0
-
 // color: float3
-color_data := [?]f32{
+colors2 := [?]f32{
 	0.973,  0.480,  0.002,
 	0.973,  0.480,  0.002,
 	0.973,  0.480,  0.002,
@@ -454,97 +561,4 @@ color_data := [?]f32{
 	0.001,  0.447,  0.067,
 	0.001,  0.447,  0.067,
 	0.001,  0.447,  0.067,
-}
-
-// normals: float3
-normals := [?]f32{
-	0, 0, 1,
-	0, 0, 1,
-	0, 0, 1,
-	0, 0, 1,
-	0,  0, -1,
-	0,  0, -1,
-	0,  0, -1,
-	0,  0, -1,
-	0,  1,  0,
-	0,  1,  0,
-	0,  1,  0,
-	0,  1,  0,
-	0, -1,  0,
-	0, -1,  0,
-	0, -1,  0,
-	0, -1,  0,
-	1,  0,  0,
-	1,  0,  0,
-	1,  0,  0,
-	1,  0,  0,
-	-1,  0,  0,
-	-1,  0,  0,
-	-1,  0,  0,
-	-1,  0,  0,
-}
-
-// texcoord: float2
-texcoords := [?]f32{
-	0, 0,
-	1, 0,
-	1, 1,
-	0, 1,
-	1, 0,
-	1, 1,
-	0, 1,
-	0, 0,
-	0, 1,
-	0, 0,
-	1, 0,
-	1, 1,
-	1, 1,
-	0, 1,
-	0, 0,
-	1, 0,
-	1, 0,
-	1, 1,
-	0, 1,
-	0, 0,
-	0, 0,
-	1, 0,
-	1, 1,
-	0, 1,
-}
-
-// position: float3, normal: float3,
-vertices := [?]f32{
-	-width/2, -height/2,  length/2,
-	 width/2, -height/2,  length/2,
-	 width/2,  height/2,  length/2,
-	-width/2,  height/2,  length/2,
-	-width/2, -height/2, -length/2,
-	-width/2,  height/2, -length/2,
-	 width/2,  height/2, -length/2,
-	 width/2, -height/2, -length/2,
-	-width/2,  height/2, -length/2,
-	-width/2,  height/2,  length/2,
-	 width/2,  height/2,  length/2,
-	 width/2,  height/2, -length/2,
-	-width/2, -height/2, -length/2,
-	 width/2, -height/2, -length/2,
-	 width/2, -height/2,  length/2,
-	-width/2, -height/2,  length/2,
-	 width/2, -height/2, -length/2,
-	 width/2,  height/2, -length/2,
-	 width/2,  height/2,  length/2,
-	 width/2, -height/2,  length/2,
-	-width/2, -height/2, -length/2,
-	-width/2, -height/2,  length/2,
-	-width/2,  height/2,  length/2,
-	-width/2,  height/2, -length/2,
-}
-
-index_data := [?]u32{
-	 0,  1,  2,  0,  2,  3,
-	 4,  5,  6,  4,  6,  7,
-	 8,  9, 10,  8, 10, 11,
-	12, 13, 14, 12, 14, 15,
-	16, 17, 18, 16, 18, 19,
-	20, 21, 22, 20, 22, 23,
 }
