@@ -1,5 +1,6 @@
 *.bin
 *.exe
 *.pdb
+*.out
 
 ols.json

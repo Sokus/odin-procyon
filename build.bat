@@ -1,3 +1,3 @@
 @echo off
 
-odin build src -collection:shared=src -out=procyon.exe -debug
+odin build src -collection:procyon=src -out=procyon.exe -debug
