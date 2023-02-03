@@ -247,6 +247,7 @@ main :: proc() {
 
 	glfw.WindowHint(glfw.SCALE_TO_MONITOR, 0)
 	glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)
+	glfw.WindowHint(glfw.RESIZABLE, 0)
 	window := glfw.CreateWindow(960, 540, "Hello D3D", nil, nil)
 	defer glfw.DestroyWindow(window)
 
