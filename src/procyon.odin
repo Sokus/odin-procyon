@@ -72,7 +72,7 @@ Mesh :: struct {
 	vertices:  []f32,
 	texcoords: []f32,
 	normals:   []f32,
-	colors:    []f32,
+	colors:    []u32,
 	default_color: bool,
 	indices:   []u32,
 
@@ -119,8 +119,8 @@ upload_mesh :: proc(mesh: ^Mesh) {
 
 	if len(mesh.colors) == 0 {
 		mesh.default_color = true
-		colors := []f32{ 1.0, 1.0, 1.0 }
-		mesh.colors = make([]f32, len(colors))
+		colors := []u32{ 0xff0000ff }
+		mesh.colors = make([]u32, len(colors))
 		copy_slice(mesh.colors, colors)
 	}
 
@@ -351,7 +351,7 @@ main :: proc() {
 		{ "POS", 0, .R32G32B32_FLOAT, 0,                            0, .VERTEX_DATA, 0 },
 		{ "NOR", 0, .R32G32B32_FLOAT, 1, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
 		{ "TEX", 0, .R32G32_FLOAT,    2, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
-		{ "COL", 0, .R32G32B32_FLOAT, 3, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
+		{ "COL", 0, .R8G8B8A8_UNORM, 3, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
 	}
 	state.device->CreateInputLayout(&input_element_desc[0], len(input_element_desc), state.vs_blob->GetBufferPointer(), state.vs_blob->GetBufferSize(), &state.input_layouts[0])
 
@@ -439,7 +439,7 @@ main :: proc() {
 		3 * size_of(f32), // vertices
 		3 * size_of(f32), // normals
 		2 * size_of(f32), // texcoords
-		3 * size_of(f32), // colors
+		size_of(u32), // colors
 	}
 
 	vertex_buffer_offsets := [?]u32{
@@ -530,32 +530,4 @@ TEXTURE_HEIGHT :: 2
 texture_data := [TEXTURE_WIDTH*TEXTURE_HEIGHT]u32{
 	0xffffffff, 0xff7f7f7f,
 	0xff7f7f7f, 0xffffffff,
-}
-
-// color: float3
-colors2 := [?]f32{
-	0.973,  0.480,  0.002,
-	0.973,  0.480,  0.002,
-	0.973,  0.480,  0.002,
-	0.973,  0.480,  0.002,
-	0.897,  0.163,  0.011,
-	0.897,  0.163,  0.011,
-	0.897,  0.163,  0.011,
-	0.897,  0.163,  0.011,
-	0.612,  0.000,  0.069,
-	0.612,  0.000,  0.069,
-	0.612,  0.000,  0.069,
-	0.612,  0.000,  0.069,
-	0.127,  0.116,  0.408,
-	0.127,  0.116,  0.408,
-	0.127,  0.116,  0.408,
-	0.127,  0.116,  0.408,
-	0.000,  0.254,  0.637,
-	0.000,  0.254,  0.637,
-	0.000,  0.254,  0.637,
-	0.000,  0.254,  0.637,
-	0.001,  0.447,  0.067,
-	0.001,  0.447,  0.067,
-	0.001,  0.447,  0.067,
-	0.001,  0.447,  0.067,
 }
