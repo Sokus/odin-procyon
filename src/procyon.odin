@@ -73,12 +73,11 @@ Mesh :: struct {
 	texcoords: []f32,
 	normals:   []f32,
 	colors:    []f32,
+	default_color: bool,
 	indices:   []u32,
 
 	vertex_buffers: [MeshVertexBuffer]^D3D11.IBuffer,
 	index_buffer: ^D3D11.IBuffer,
-
-	input_layout: ^D3D11.IInputLayout,
 }
 
 State :: struct {
@@ -87,8 +86,7 @@ State :: struct {
 	vs_blob, ps_blob: ^D3D11.IBlob,
 	vertex_shader: ^D3D11.IVertexShader,
 	pixel_shader: ^D3D11.IPixelShader,
-
-	input_layout: ^D3D11.IInputLayout,
+	input_layouts: [2]^D3D11.IInputLayout,
 }
 
 state: State
@@ -96,13 +94,6 @@ state: State
 upload_mesh :: proc(mesh: ^Mesh) {
 	for mesh_vertex_buffer in MeshVertexBuffer {
 		assert(mesh.vertex_buffers[mesh_vertex_buffer] == nil, "Failed to upload mesh, buffer already initialized")
-	}
-
-	input_element_desc := [?]D3D11.INPUT_ELEMENT_DESC{
-		{ "POS", 0, .R32G32B32_FLOAT, 0,                            0, .VERTEX_DATA, 0 },
-		{ "NOR", 0, .R32G32B32_FLOAT, 1, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
-		{ "TEX", 0, .R32G32_FLOAT,    2, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
-		{ "COL", 0, .R32G32B32_FLOAT, 3, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA if len(mesh.colors) > 0 else .INSTANCE_DATA, 0 },
 	}
 
 	vertex_buffer_desc := D3D11.BUFFER_DESC{ Usage = .IMMUTABLE, BindFlags = {.VERTEX_BUFFER} }
@@ -127,6 +118,7 @@ upload_mesh :: proc(mesh: ^Mesh) {
 	state.device->CreateBuffer(&vertex_buffer_desc, &subresource_data, &mesh.vertex_buffers[.Normal])
 
 	if len(mesh.colors) == 0 {
+		mesh.default_color = true
 		colors := []f32{ 1.0, 1.0, 1.0 }
 		mesh.colors = make([]f32, len(colors))
 		copy_slice(mesh.colors, colors)
@@ -145,8 +137,6 @@ upload_mesh :: proc(mesh: ^Mesh) {
 	}
 	subresource_data = D3D11.SUBRESOURCE_DATA{ pSysMem = &mesh.indices[0], SysMemPitch = indices_size }
 	state.device->CreateBuffer(&index_buffer_desc, &subresource_data, &mesh.index_buffer)
-
-	state.device->CreateInputLayout(&input_element_desc[0], len(input_element_desc), state.vs_blob->GetBufferPointer(), state.vs_blob->GetBufferSize(), &mesh.input_layout)
 }
 
 generate_mesh_cube :: proc(width, height, length: f32) -> (mesh: Mesh) {
@@ -240,8 +230,8 @@ generate_mesh_cube :: proc(width, height, length: f32) -> (mesh: Mesh) {
 	mesh.texcoords = make([]f32, len(texcoords))
 	copy_slice(mesh.texcoords, texcoords[:])
 
-	mesh.colors = make([]f32, len(colors))
-	copy_slice(mesh.colors, colors[:])
+	//mesh.colors = make([]f32, len(colors))
+	//copy_slice(mesh.colors, colors[:])
 
 	mesh.indices = make([]u32, len(indices))
 	copy_slice(mesh.indices, indices[:])
@@ -363,8 +353,15 @@ main :: proc() {
 		{ "TEX", 0, .R32G32_FLOAT,    2, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
 		{ "COL", 0, .R32G32B32_FLOAT, 3, D3D11.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
 	}
+	state.device->CreateInputLayout(&input_element_desc[0], len(input_element_desc), state.vs_blob->GetBufferPointer(), state.vs_blob->GetBufferSize(), &state.input_layouts[0])
+
+	input_element_desc[3].InputSlotClass = .INSTANCE_DATA
+	state.device->CreateInputLayout(&input_element_desc[0], len(input_element_desc), state.vs_blob->GetBufferPointer(), state.vs_blob->GetBufferSize(), &state.input_layouts[1])
+
 
 	state.pixel_shader, state.ps_blob = create_pixel_shader(state.device, "assets/shader.hlsl")
+
+
 
 	///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -500,7 +497,7 @@ main :: proc() {
 		device_context->IASetPrimitiveTopology(.TRIANGLELIST)
 		//device_context->IASetInputLayout(input_layout)
 		//device_context->IASetVertexBuffers(0, len(vertex_buffers), &vertex_buffers[0], &vertex_buffer_strides[0], &vertex_buffer_offsets[0])
-		device_context->IASetInputLayout(mesh.input_layout)
+		device_context->IASetInputLayout(state.input_layouts[int(mesh.default_color)])
 		device_context->IASetVertexBuffers(0, len(mesh.vertex_buffers), &mesh.vertex_buffers[MeshVertexBuffer(0)], &vertex_buffer_strides[0], &vertex_buffer_offsets[0])
 		//device_context->IASetIndexBuffer(index_buffer, .R32_UINT, 0)
 		device_context->IASetIndexBuffer(mesh.index_buffer, .R32_UINT, 0)
