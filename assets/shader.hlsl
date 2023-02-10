@@ -1,16 +1,16 @@
 cbuffer constant_projection : register(b0)
 {
-    row_major float4x4 matrix_projection;
+    column_major float4x4 matrix_projection;
 }
 
 cbuffer constant_view : register(b1)
 {
-    row_major float4x4 matrix_view;
+    column_major float4x4 matrix_view;
 }
 
 cbuffer constant_model : register(b2)
 {
-    row_major float4x4 matrix_model;
+    column_major float4x4 matrix_model;
 }
 
 cbuffer constant_light : register(b3)
@@ -38,11 +38,11 @@ SamplerState mysampler : register(s0);
 
 vs_out vs_main(vs_in input)
 {
-    float light = clamp(dot(mul(input.normal, matrix_model), normalize(-lightvector)), 0.0f, 1.0f) * 0.8f + 0.2f;
+    float light = clamp(dot(normalize(-lightvector), mul(matrix_model, input.normal)), 0.0f, 1.0f) * 0.8f + 0.2f;
 
+    float4x4 projection = mul(mul(matrix_projection, matrix_view), matrix_model);
     vs_out output;
-
-    output.position = mul(float4(input.position, 1.0f), mul(matrix_model, matrix_projection));
+    output.position = mul(projection, float4(input.position, 1.0f));
     output.texcoord = input.texcoord;
     output.color    = float4(input.color * light, 1.0f);
 

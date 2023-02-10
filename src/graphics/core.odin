@@ -209,16 +209,22 @@ set_viewport :: proc(width, height: int) {
 	n := f32(1)
 	f := f32(9)
 
+
 	constant_projection := shader_constant_begin_map(ShaderConstantProjection)
-	constant_projection.matrix_projection = {
-		2 * n / w, 0,         0,           0,
-		0,         2 * n / h, 0,           0,
-		0,         0,         f / (f - n), n * f / (n - f),
-		0,         0,         1,           0,
-	}
+	constant_projection.matrix_projection = mat4_perspective(w, h, n, f)
 	shader_constant_end_map(ShaderConstantProjection)
 
 	state.device_context->RSSetViewports(1, &viewport)
+}
+
+mat4_perspective :: proc(w, h, n, f : f32) -> (result: glm.mat4) {
+	result = glm.mat4{
+		-2 * n / w, 0,         0,           0,
+		0,         2 * n / h, 0,           0,
+		0,         0,         f / (n - f), n * f / (n - f),
+		0,         0,         -1,           0,
+	}
+	return
 }
 
 on_resize :: proc (new_width, new_height: int) {

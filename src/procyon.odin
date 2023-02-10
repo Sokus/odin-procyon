@@ -69,20 +69,23 @@ main :: proc() {
 	model_rotation    := [3]f32 {0, 0, 0}
 	model_position    := [3]f32 {0.0, 0.0, 4.0}
 
-	constant_view := graphics.shader_constant_begin_map(graphics.ShaderConstantView)
-	constant_view.matrix_view = glm.identity(glm.mat4)
-	graphics.shader_constant_end_map(graphics.ShaderConstantView)
-
 	constant_light := graphics.shader_constant_begin_map(graphics.ShaderConstantLight)
 	constant_light.light_vector = {+1, -1, +1}
 	graphics.shader_constant_end_map(graphics.ShaderConstantLight)
 
+	constant_view := graphics.shader_constant_begin_map(graphics.ShaderConstantView)
+	eye := glm.vec3{0, 0, 0}
+	center := glm.vec3{0, 0, 4}
+	up := glm.vec3{0, 1, 0}
+	constant_view.matrix_view = glm.mat4LookAt(eye, center, up)
+	graphics.shader_constant_end_map(graphics.ShaderConstantView)
+
 	for !glfw.WindowShouldClose(window) {
 		glfw.PollEvents()
 
-		//model_rotation.x += 0.005
+		model_rotation.x += 0.005
 		model_rotation.y += 0.009
-		//model_rotation.z += 0.001
+		model_rotation.z += 0.001
 
 		graphics.state.device_context->ClearRenderTargetView(graphics.state.framebuffer_view, &[4]f32{0.025, 0.025, 0.025, 1.0})
 		graphics.state.device_context->ClearDepthStencilView(graphics.state.depth_buffer_view, {.DEPTH}, 1, 0)
